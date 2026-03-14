@@ -3,7 +3,8 @@
 // Shows warehouses with addresses, capacity bars,
 // manager info, and an edit modal per warehouse.
 // ─────────────────────────────────────────────
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { supabase } from '../lib/supabase';
 import { mockWarehouses } from '../data/mockData';
 
 // Capacity bar component
@@ -28,9 +29,24 @@ const inpStyle = { background:'rgba(255,255,255,0.04)', border:'1px solid rgba(2
 const lbl = "text-xs text-slate-500 uppercase tracking-wider mb-1.5 block";
 
 export default function SettingsPage({ addToast }) {
-  const [warehouses, setWarehouses] = useState(mockWarehouses);
+  const [warehouses, setWarehouses] = useState([]);
   const [editingWh, setEditingWh]   = useState(null); // warehouse being edited
   const [editForm,  setEditForm]    = useState({});
+
+  useEffect(() => {
+    fetchWarehouses();
+  }, []);
+
+  const fetchWarehouses = async () => {
+    try {
+      const { data, error } = await supabase.from('warehouses').select('*').order('name');
+      if (error) throw error;
+      setWarehouses(data || []);
+    } catch (err) {
+      console.error('Error fetching warehouses:', err);
+      addToast('Failed to load warehouses', 'error');
+    }
+  };
 
   // Open edit modal pre-filled with selected warehouse data
   const openEdit = (wh) => {
@@ -38,11 +54,29 @@ export default function SettingsPage({ addToast }) {
     setEditForm({ ...wh });
   };
 
-  // Save warehouse changes (frontend-only state update)
-  const saveEdit = () => {
-    setWarehouses(prev => prev.map(w => w.id === editingWh ? { ...editForm } : w));
-    setEditingWh(null);
-    addToast('Warehouse settings saved', 'success');
+  // Save warehouse changes
+  const saveEdit = async () => {
+    try {
+      const { error } = await supabase
+        .from('warehouses')
+        .update({
+          name: editForm.name,
+          address: editForm.address,
+          manager: editForm.manager,
+          phone: editForm.phone,
+          type: editForm.type,
+          capacity: parseInt(editForm.capacity) || 0
+        })
+        .eq('id', editingWh);
+      
+      if (error) throw error;
+
+      setWarehouses(prev => prev.map(w => w.id === editingWh ? { ...editForm } : w));
+      setEditingWh(null);
+      addToast('Warehouse settings saved', 'success');
+    } catch (err) {
+      addToast(err.message, 'error');
+    }
   };
 
   return (
@@ -212,11 +246,11 @@ export default function SettingsPage({ addToast }) {
               <button onClick={() => setEditingWh(null)} className="text-slate-500 hover:text-slate-300 cursor-pointer text-lg leading-none">✕</button>
             </div>
             <div className="flex flex-col gap-3">
-              {[['name','Warehouse Name'],['address','Address'],['manager','Manager'],['phone','Phone']].map(([k,l]) => (
+              {[['name','Warehouse Name'],['address','Address'],['manager','Manager'],['phone','Phone'],['capacity','Capacity']].map(([k,l]) => (
                 <div key={k}>
                   <label className={lbl}>{l}</label>
                   <input value={editForm[k]||''} onChange={e=>setEditForm(f=>({...f,[k]:e.target.value}))}
-                    className={inp} style={inpStyle}/>
+                    className={inp} style={inpStyle} type={k === 'capacity' ? 'number' : 'text'}/>
                 </div>
               ))}
               <div>

@@ -6,10 +6,11 @@
 // ─────────────────────────────────────────────
 import React, { useState, useMemo, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { mockProducts, mockReceipts, mockDeliveries, mockTransfers, mockMoveHistory, chartData } from '../data/mockData';
+import { chartData } from '../data/mockData';
 
 // ── Sparkline SVG (no external lib) ──
 function SparkLine({ data, color, height = 36 }) {
+  if (!data || data.length < 2) return null;
   const max = Math.max(...data), min = Math.min(...data);
   const pts = data.map((v, i) => {
     const x = (i / (data.length - 1)) * 100;
@@ -25,8 +26,8 @@ function SparkLine({ data, color, height = 36 }) {
 
 // ── Bar chart for stock movement ──
 function StockChart({ period }) {
-  const d = chartData[period];
-  const maxVal = Math.max(...d.in, ...d.out);
+  const d = chartData[period] || chartData.weekly;
+  const maxVal = Math.max(...d.in, ...d.out, 1);
   const H = 110, barW = 8, gap = 4, slotW = barW * 2 + gap + 12;
   return (
     <svg width="100%" viewBox={`0 0 ${slotW * d.labels.length} ${H + 24}`} preserveAspectRatio="none">
@@ -102,6 +103,10 @@ function DocBadge({ type }) {
 
 export default function DashboardPage({ setActivePage }) {
   const [period, setPeriod]   = useState('weekly');
+  const [products, setProducts] = useState([]);
+  const [operations, setOperations] = useState([]);
+  const [history, setHistory] = useState([]);
+  const [loading, setLoading] = useState(true);
 
   // ── Filter state ──
   const [filterDocType,   setFilterDocType]   = useState('All');
@@ -109,24 +114,49 @@ export default function DashboardPage({ setActivePage }) {
   const [filterWarehouse, setFilterWarehouse] = useState('All');
   const [filterCategory,  setFilterCategory]  = useState('All');
 
+  useEffect(() => {
+    fetchDashboardData();
+  }, []);
+
+  const fetchDashboardData = async () => {
+    try {
+      setLoading(true);
+      const { data: prods } = await supabase.from('products').select('*');
+      const { data: ops }   = await supabase.from('operations').select('*');
+      const { data: ledger } = await supabase.from('stock_ledger').select('*').order('created_at', { ascending: false }).limit(10);
+      
+      setProducts(prods || []);
+      setOperations(ops || []);
+      setHistory(ledger || []);
+    } catch (err) {
+      console.error('Error fetching dashboard data:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // ── Derived KPI numbers ──
-  const totalStock   = mockProducts.reduce((s, p) => s + p.qty, 0);
-  const lowStockCnt  = mockProducts.filter(p => p.qty > 0 && p.qty < p.minQty).length;
-  const outStockCnt  = mockProducts.filter(p => p.qty === 0).length;
-  const pendingReceipts   = mockReceipts.filter(r => r.status === 'Waiting' || r.status === 'Ready').length;
-  const pendingDeliveries = mockDeliveries.filter(d => d.status === 'Waiting' || d.status === 'Ready').length;
-  const pendingTransfers  = mockTransfers.filter(t => t.status === 'Waiting' || t.status === 'Ready' || t.status === 'Draft').length;
+  const stats = useMemo(() => {
+    const p = products;
+    const o = operations;
+    return {
+      totalStock:   p.reduce((s, p) => s + (p.quantity || 0), 0),
+      lowStock:     p.filter(p => (p.quantity || 0) > 0 && (p.quantity || 0) < (p.min_quantity || 0)).length,
+      outStock:     p.filter(p => (p.quantity || 0) <= 0).length,
+      pendingR:     o.filter(r => r.type === 'Receipt'  && (r.status === 'Waiting' || r.status === 'Ready')).length,
+      pendingD:     o.filter(r => r.type === 'Delivery' && (r.status === 'Waiting' || r.status === 'Ready')).length,
+      pendingT:     o.filter(r => r.type === 'Transfer' && (r.status === 'Waiting' || r.status === 'Ready' || r.status === 'Draft')).length,
+    };
+  }, [products, operations]);
 
   // ── Filtered move history for the snapshot table ──
   const filteredHistory = useMemo(() => {
     return history.filter(m => {
-      // For now, history is stock_ledger entries
-      if (filterDocType   !== 'All') return false; // Stock ledger doesn't have docType in this simplified view
-      if (filterStatus    !== 'All' && filterStatus !== 'Done') return false; 
-      // filterWarehouse logic...
+      // For stock_ledger, we don't have all types in this simple view
+      // But we can show them as adjustments or general moves
       return true;
     });
-  }, [history, filterDocType, filterStatus, filterWarehouse]);
+  }, [history]);
 
   // ── Low-stock items for alert table ──
   const alertItems = useMemo(() => {
@@ -139,6 +169,17 @@ export default function DashboardPage({ setActivePage }) {
   }, [products, filterCategory]);
 
   const selStyle = { background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.08)' };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-8 h-8 border-4 border-blue-500/20 border-t-blue-500 rounded-full animate-spin" />
+          <p className="text-slate-500 text-sm">Loading dashboard data...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-6 space-y-6">
@@ -166,7 +207,7 @@ export default function DashboardPage({ setActivePage }) {
         </div>
       )}
 
-      {/* ── 5 KPI cards (requirement: total stock, low/out, pending receipts, deliveries, transfers) ── */}
+      {/* ── 5 KPI cards ── */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
         {/* 1. Total product stock */}
         <KpiCard
@@ -250,7 +291,7 @@ export default function DashboardPage({ setActivePage }) {
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-xs text-slate-300 truncate">
-                    {products.find(p=>p.id === m.product_id)?.name || m.product_id}
+                    {products.find(p=>p.id === m.product_id)?.name || 'Unknown Product'}
                   </p>
                   <p className="text-[10px] text-slate-600 mt-0.5">
                     {m.quantity_change > 0 ? 'Stock Add' : 'Stock Remove'} · {m.quantity_change > 0 ? '+' : ''}{m.quantity_change}
@@ -264,75 +305,50 @@ export default function DashboardPage({ setActivePage }) {
         </div>
       </div>
 
-      {/* ── Inventory snapshot with filters ── */}
+      {/* ── Inventory snapshot table ── */}
       <div className="glass rounded-xl p-5 animate-fade-up delay-400">
-        <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
-          <h3 className="font-display font-semibold text-white text-sm">Inventory Operations Snapshot</h3>
-          {/* ── Filters row ── */}
-          <div className="flex flex-wrap gap-2">
-            {/* Filter by document type */}
-            <select value={filterDocType} onChange={e=>setFilterDocType(e.target.value)}
-              className="px-2 py-1.5 rounded-lg text-xs text-slate-300 cursor-pointer" style={selStyle}>
-              <option value="All">All Types</option>
-              <option>Receipt</option><option>Delivery</option><option>Transfer</option><option>Adjustment</option>
-            </select>
-            {/* Filter by status */}
-            <select value={filterStatus} onChange={e=>setFilterStatus(e.target.value)}
-              className="px-2 py-1.5 rounded-lg text-xs text-slate-300 cursor-pointer" style={selStyle}>
-              <option value="All">All Status</option>
-              <option>Draft</option><option>Waiting</option><option>Ready</option><option>Done</option><option>Canceled</option>
-            </select>
-            {/* Filter by warehouse */}
-            <select value={filterWarehouse} onChange={e=>setFilterWarehouse(e.target.value)}
-              className="px-2 py-1.5 rounded-lg text-xs text-slate-300 cursor-pointer" style={selStyle}>
-              <option value="All">All Warehouses</option>
-              <option>Warehouse A</option><option>Warehouse B</option><option>Warehouse C</option>
-            </select>
-          </div>
-        </div>
-
-        {/* Snapshot table */}
+        <h3 className="font-display font-semibold text-white text-sm mb-4">Inventory Operations Snapshot</h3>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead style={{ borderBottom:'1px solid rgba(255,255,255,0.06)' }}>
               <tr>
-                {['Doc ID','Type','Product','Qty','From','To','Status','Date','By'].map(h=>(
+                {['Doc ID','Type','Product','Qty','Status','Date'].map(h=>(
                   <th key={h} className="text-left text-xs text-slate-600 uppercase tracking-wider pb-3 pr-4 font-medium whitespace-nowrap">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {filteredHistory.map(m => (
+              {history.map(m => (
                 <tr key={m.id} className="trow" style={{ borderBottom:'1px solid rgba(255,255,255,0.04)' }}>
-                  <td className="py-2.5 pr-4 font-mono text-[10px] text-slate-500">{m.docId}</td>
-                  <td className="py-2.5 pr-4"><DocBadge type={m.docType}/></td>
-                  <td className="py-2.5 pr-4 text-slate-200 font-medium text-xs whitespace-nowrap">{m.product}</td>
-                  <td className="py-2.5 pr-4 text-xs font-bold" style={{ color: m.qty >= 0 ? '#4ade80' : '#f87171', fontFamily:'Syne,sans-serif' }}>
-                    {m.qty >= 0 ? '+' : ''}{m.qty}
+                  <td className="py-2.5 pr-4 font-mono text-[10px] text-slate-500 truncate max-w-[80px]">{m.id}</td>
+                  <td className="py-2.5 pr-4"><DocBadge type="Adjustment"/></td>
+                  <td className="py-2.5 pr-4 text-slate-200 font-medium text-xs whitespace-nowrap">
+                    {products.find(p=>p.id === m.product_id)?.name || 'Product'}
                   </td>
-                  <td className="py-2.5 pr-4 text-xs text-slate-500 whitespace-nowrap">{m.from}</td>
-                  <td className="py-2.5 pr-4 text-xs text-slate-500 whitespace-nowrap">{m.to}</td>
-                  <td className="py-2.5 pr-4"><StatusBadge status={m.status}/></td>
-                  <td className="py-2.5 pr-4 text-xs text-slate-600 font-mono whitespace-nowrap">{m.date}</td>
-                  <td className="py-2.5 text-xs text-slate-500">{m.user}</td>
+                  <td className="py-2.5 pr-4 text-xs font-bold" style={{ color: (m.quantity_change||0) >= 0 ? '#4ade80' : '#f87171' }}>
+                    {(m.quantity_change||0) >= 0 ? '+' : ''}{m.quantity_change}
+                  </td>
+                  <td className="py-2.5 pr-4"><StatusBadge status="Done"/></td>
+                  <td className="py-2.5 pr-4 text-xs text-slate-600 font-mono whitespace-nowrap">
+                    {m.created_at ? new Date(m.created_at).toLocaleDateString() : 'Today'}
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
-          {filteredHistory.length === 0 && (
-            <p className="text-center text-slate-600 text-sm py-8">No records match your filters</p>
+          {history.length === 0 && (
+            <p className="text-center text-slate-600 text-sm py-8">No records available</p>
           )}
         </div>
       </div>
 
-      {/* ── Stock alert table with category filter ── */}
+      {/* ── Stock alert table ── */}
       <div className="glass rounded-xl p-5 animate-fade-up delay-500">
         <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
           <div className="flex items-center gap-2">
             <h3 className="font-display font-semibold text-white text-sm">Items Needing Attention</h3>
             <span className="badge" style={{ background:'rgba(245,158,11,0.12)', color:'#f59e0b', border:'1px solid rgba(245,158,11,0.2)' }}>{alertItems.length}</span>
           </div>
-          {/* Filter by product category */}
           <select value={filterCategory} onChange={e=>setFilterCategory(e.target.value)}
             className="px-2 py-1.5 rounded-lg text-xs text-slate-300 cursor-pointer" style={selStyle}>
             <option value="All">All Categories</option>
@@ -356,8 +372,8 @@ export default function DashboardPage({ setActivePage }) {
                   <td className="py-3 pr-4 text-xs text-slate-500">{p.min_quantity}</td>
                   <td className="py-3">
                     {(p.quantity || 0) <= 0
-                      ? <span className="badge" style={{ background:'rgba(239,68,68,0.1)',  color:'#f87171', border:'1px solid rgba(239,68,68,0.2)'  }}>Out of Stock</span>
-                      : <span className="badge" style={{ background:'rgba(245,158,11,0.1)', color:'#fbbf24', border:'1px solid rgba(245,158,11,0.2)' }}>Low Stock</span>
+                       ? <span className="badge" style={{ background:'rgba(239,68,68,0.1)',  color:'#f87171', border:'1px solid rgba(239,68,68,0.2)'  }}>Out of Stock</span>
+                       : <span className="badge" style={{ background:'rgba(245,158,11,0.1)', color:'#fbbf24', border:'1px solid rgba(245,158,11,0.2)' }}>Low Stock</span>
                     }
                   </td>
                 </tr>

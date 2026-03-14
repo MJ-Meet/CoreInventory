@@ -1,7 +1,8 @@
 // ─────────────────────────────────────────────
 // src/App.jsx  –  Root component & router
 // ─────────────────────────────────────────────
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { supabase } from './lib/supabase';
 import LoginPage       from './pages/LoginPage';
 import DashboardPage   from './pages/DashboardPage';
 import ProductsPage    from './pages/ProductsPage';
@@ -16,14 +17,66 @@ import { useToast }    from './hooks/useToast';
 export default function App() {
   // null = not logged in
   const [user, setUser]             = useState(null);
+  const [loading, setLoading]       = useState(true);
   const [activePage, setActivePage] = useState('dashboard');
   const { toasts, addToast, removeToast } = useToast();
+
+  useEffect(() => {
+    // Check initial session
+    const checkSession = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) {
+        setUser({
+          ...session.user,
+          name: session.user.user_metadata?.full_name || session.user.email,
+          role: session.user.user_metadata?.role || 'staff'
+        });
+      }
+      setLoading(false);
+    };
+
+    checkSession();
+
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session) {
+        setUser({
+          ...session.user,
+          name: session.user.user_metadata?.full_name || session.user.email,
+          role: session.user.user_metadata?.role || 'staff'
+        });
+      } else {
+        setUser(null);
+      }
+      setLoading(false);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#080c14] flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-10 h-10 border-4 border-blue-500/20 border-t-blue-500 rounded-full animate-spin" />
+          <p className="text-slate-500 text-sm font-medium">Initializing StockIQ...</p>
+        </div>
+      </div>
+    );
+  }
 
   // ── Show login screen when not authenticated ──
   if (!user) {
     return (
       <>
-        <LoginPage onLogin={(u) => { setUser(u); setActivePage('dashboard'); }} />
+        <LoginPage onLogin={(u) => { 
+          setUser({
+            ...u,
+            name: u.user_metadata?.full_name || u.email,
+            role: u.user_metadata?.role || u.role || 'staff'
+          }); 
+          setActivePage('dashboard'); 
+        }} />
         <ToastContainer toasts={toasts} removeToast={removeToast} />
       </>
     );
@@ -70,11 +123,11 @@ export default function App() {
               className="flex items-center gap-2 px-3 py-1.5 rounded-full cursor-pointer hover:bg-white/[0.04] transition-colors"
               style={{ border:'1px solid rgba(255,255,255,0.06)' }}
             >
-              <div className="w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold text-white"
+              <div className="w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold text-white uppercase"
                 style={{ background:'linear-gradient(135deg,#388bfd,#a855f7)' }}>
-                {(user.name || user.email)[0].toUpperCase()}
+                {(user.name || user.email || 'U')[0]}
               </div>
-              <span className="text-xs text-slate-400 capitalize">{user.role}</span>
+              <span className="text-xs text-slate-400 capitalize">{user.role || 'staff'}</span>
             </button>
           </div>
         </div>
