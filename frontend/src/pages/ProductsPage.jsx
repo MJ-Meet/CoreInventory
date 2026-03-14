@@ -49,11 +49,7 @@ export default function ProductsPage({ addToast }) {
   const [status,   setStatus]   = useState('All');
   const [sortBy,   setSortBy]   = useState('name');
   const [sortDir,  setSortDir]  = useState('asc');
-  const [viewMode, setViewMode] = useState('table'); // 'table' | 'grid'
-  const [editingId, setEditingId] = useState(null);
-  const [editQty,   setEditQty]   = useState('');
-  const [selected,  setSelected]  = useState(new Set());
-  const [showAdd,   setShowAdd]   = useState(false);
+  const [loading,   setLoading]   = useState(true);
   const [newProd,   setNewProd]   = useState({ name:'', sku:'', category:'', qty:'', minQty:'', price:'', supplier:'' });
 
   useEffect(() => {
@@ -61,6 +57,7 @@ export default function ProductsPage({ addToast }) {
   }, []);
 
   const fetchData = async () => {
+    setLoading(true);
     try {
       const { data: prods, error: pErr } = await supabase
         .from('products')
@@ -75,6 +72,8 @@ export default function ProductsPage({ addToast }) {
     } catch (err) {
       console.error('Error fetching products:', err);
       addToast('Failed to load products', 'error');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -188,7 +187,14 @@ export default function ProductsPage({ addToast }) {
 
   return (
     <div className="p-6 space-y-5">
-      {/* Header */}
+      {loading ? (
+        <div className="flex flex-col items-center justify-center py-20 animate-fade-in">
+          <div className="w-10 h-10 border-4 border-blue-500/20 border-t-blue-500 rounded-full animate-spin mb-4" />
+          <p className="text-slate-500 text-sm font-medium">Scanning inventory...</p>
+        </div>
+      ) : (
+        <>
+          {/* Header */}
       <div className="flex items-center justify-between animate-fade-up">
         <div>
           <h1 className="font-display text-2xl font-700 text-white tracking-tight">Products</h1>
@@ -336,7 +342,7 @@ export default function ProductsPage({ addToast }) {
                         </button>
                       )}
                     </td>
-                    <td className="px-3 py-3 text-xs text-slate-400">₹{p.price.toLocaleString('en-IN')}</td>
+                    <td className="px-3 py-3 text-xs text-slate-400">₹{(p.price || 0).toLocaleString('en-IN')}</td>
                     <td className="px-3 py-3"><StatusBadge status={st}/></td>
                     <td className="px-3 py-3">
                       <button className="text-slate-600 hover:text-red-400 transition-colors cursor-pointer p-1 rounded hover:bg-red-500/10"
@@ -386,7 +392,7 @@ export default function ProductsPage({ addToast }) {
                   </div>
                   <div className="text-right">
                     <p className="text-[10px] text-slate-600">Price</p>
-                    <p className="text-xs font-medium text-slate-300">₹{p.price.toLocaleString('en-IN')}</p>
+                    <p className="text-xs font-medium text-slate-300">₹{(p.price || 0).toLocaleString('en-IN')}</p>
                   </div>
                 </div>
               </div>
@@ -439,9 +445,11 @@ export default function ProductsPage({ addToast }) {
                 Add Product
               </button>
             </div>
+            </div>
           </div>
-        </div>
-      )}
-    </div>
-  );
+        )}
+      </>
+    )}
+  </div>
+);
 }

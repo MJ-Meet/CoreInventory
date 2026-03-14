@@ -89,7 +89,10 @@ export default function App() {
         activePage={activePage}
         setActivePage={setActivePage}
         user={user}
-        onLogout={() => setUser(null)}
+        onLogout={async () => {
+          await supabase.auth.signOut();
+          setUser(null);
+        }}
       />
 
       {/* ml-56 offsets the fixed 224px sidebar */}
